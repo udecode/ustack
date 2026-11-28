@@ -106,11 +106,69 @@ function deepEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function mergeFavorites(current, desired) {
+  const base = Array.isArray(current) ? current.map((entry) => (isPlainObject(entry) ? { ...entry } : entry)) : [];
+  let changed = !Array.isArray(current);
+  for (const item of desired) {
+    const exists = base.some(
+      (entry) => isPlainObject(entry) && entry.provider === item.provider && entry.model === item.model
+    );
+    if (!exists) {
+      base.push({ ...item });
+      changed = true;
+    }
+  }
+  return { changed, value: base };
+}
+
+function mergeModelPreferences(current, desired) {
+  const base = isPlainObject(current) ? { ...current } : {};
+  let changed = !isPlainObject(current);
+  for (const [provider, preset] of Object.entries(desired)) {
+    const existing = isPlainObject(base[provider]) ? { ...base[provider] } : null;
+    if (!existing) {
+      base[provider] = { ...preset };
+      changed = true;
+      continue;
+    }
+    const existingHidden = Array.isArray(existing.hiddenModels) ? [...existing.hiddenModels] : [];
+    let providerChanged = !Array.isArray(existing.hiddenModels);
+    for (const model of preset.hiddenModels ?? []) {
+      if (!existingHidden.includes(model)) {
+        existingHidden.push(model);
+        providerChanged = true;
+      }
+    }
+    if (providerChanged) existing.hiddenModels = existingHidden;
+    if (!Array.isArray(existing.modelOrder) && Array.isArray(preset.modelOrder)) {
+      existing.modelOrder = [...preset.modelOrder];
+      providerChanged = true;
+    }
+    if (providerChanged) {
+      base[provider] = existing;
+      changed = true;
+    }
+  }
+  return { changed, value: base };
+}
+
 function mergePreset(current, preset, nestedKeys = new Set()) {
   const next = isPlainObject(current) ? { ...current } : {};
   const updatedKeys = [];
   for (const [key, desired] of Object.entries(preset)) {
-    if (nestedKeys.has(key) && isPlainObject(desired)) {
+    if (key === 'favorites' && Array.isArray(desired)) {
+      const merged = mergeFavorites(next[key], desired);
+      if (merged.changed) {
+        next[key] = merged.value;
+        updatedKeys.push(key);
+      }
+    } else if (key === 'providerModelPreferences' && isPlainObject(desired)) {
+      const merged = mergeModelPreferences(next[key], desired);
+      if (merged.changed) {
+        next[key] = merged.value;
+        updatedKeys.push(key);
+      }
+    } else if (nestedKeys.has(key) && isPlainObject(desired)) {
       const mergedNested = isPlainObject(next[key]) ? { ...next[key] } : {};
       let nestedChanged = false;
       for (const [subKey, subVal] of Object.entries(desired)) {
@@ -473,16 +531,14 @@ export function runMigration({
   const pin = pinnedPstack(cwd);
   const pluginManifest = readJson(join(globalPluginsDir, 'pstack/.antigravity-plugin/plugin.json'));
   const globalAgentsDir = join(globalPluginsDir, 'pstack/agents');
+  const installPluginCmd = (repo, tag) =>
+    `git clone --depth 1 --branch ${tag} https://github.com/${repo} /tmp/pstack-claude && (agy plugin install /tmp/pstack-claude/plugins/pstack || { mkdir -p ~/.gemini/config/plugins && rm -rf ~/.gemini/config/plugins/pstack && cp -R /tmp/pstack-claude/plugins/pstack ~/.gemini/config/plugins/pstack; }) && rm -rf /tmp/pstack-claude ~/.gemini/config/plugins/pstack/agents`;
   if (!pluginManifest) {
     const tag = pin?.ref ?? 'main';
     const repo = pin?.repo ?? 'michael-denyer/pstack-claude';
-    todo.push(
-      `install pstack plugin for Antigravity: git clone --depth 1 --branch ${tag} https://github.com/${repo} /tmp/pstack-claude && agy plugin install /tmp/pstack-claude/plugins/pstack && rm -rf /tmp/pstack-claude ~/.gemini/config/plugins/pstack/agents`
-    );
+    todo.push(`install pstack plugin for Antigravity: ${installPluginCmd(repo, tag)}`);
   } else if (pin?.version && pluginManifest.version !== pin.version) {
-    todo.push(
-      `update Antigravity pstack plugin from ${pluginManifest.version} to ${pin.version}: git clone --depth 1 --branch ${pin.ref} https://github.com/${pin.repo} /tmp/pstack-claude && agy plugin install /tmp/pstack-claude/plugins/pstack && rm -rf /tmp/pstack-claude ~/.gemini/config/plugins/pstack/agents`
-    );
+    todo.push(`update Antigravity pstack plugin from ${pluginManifest.version} to ${pin.version}: ${installPluginCmd(pin.repo, pin.ref)}`);
   } else {
     ok.push(`Antigravity pstack plugin installed (${pluginManifest.version ?? 'unknown'})`);
   }
@@ -542,7 +598,7 @@ export function runMigration({
     if (agyRun.status === 0) {
       ok.push(`agy CLI present (${(agyRun.stdout || '').trim()})`);
     } else {
-      todo.push('install the agy (Antigravity) CLI and ensure it is on PATH');
+      ok.push('standalone agy CLI not on PATH (optional when using T3 Code bundled Antigravity)');
     }
 
     const browseBin = existsSync(join(home, '.local/bin/browse')) ? join(home, '.local/bin/browse') : 'browse';
@@ -623,7 +679,9 @@ export function runMigration({
 
   manual.push('Quit and reopen T3 Code, then start a fresh Antigravity thread so MCPs, plugins, skills, AGENTS.md, and T3 settings load.');
   manual.push('Sign in to Claude (opus) and Codex in T3 Code so fallback, UI delegation, and multi-family panels work.');
-  manual.push('Complete browser OAuth for remote MCP servers and add any Claude.ai cloud connectors (Linear, Slack, Notion) to ~/.gemini/config/mcp_config.json as {"serverUrl": "..."}.');
+  manual.push(
+    'Complete browser OAuth for remote MCP servers. Put global connectors (such as Slack or Notion) in ~/.gemini/config/mcp_config.json as {"serverUrl": "..."}, and keep project-only MCPs (such as Linear or ReUI) in <repo>/.agents/plugins/<name>/{plugin.json,mcp_config.json}.'
+  );
   if (platform === 'darwin') {
     manual.push(
       'Import signed-in Chrome profile: System Settings -> Privacy & Security -> Full Disk Access -> enable T3 Code -> quit Chrome (Cmd+Q) -> T3 Settings -> Browser -> Browser profiles -> + Add profile -> Import from Chrome -> allow Keychain.'

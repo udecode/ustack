@@ -313,3 +313,45 @@ test('apply refuses to overwrite non-empty local profile files and flags oversiz
   assert.ok(res.todo.some((line) => line.includes('23000 bytes')));
   assert.equal(readFileSync(join(profile, 'config/mcp_config.json'), 'utf8'), '{"mcpServers":{"custom":{"command":"node"}}}\n');
 });
+
+test('apply unions custom favorites and providerModelPreferences without overwriting user entries', () => {
+  const { home, repo } = makeEnv();
+  mkdirSync(join(home, '.t3/userdata'), { recursive: true });
+  writeFileSync(
+    join(home, '.t3/userdata/settings.json'),
+    JSON.stringify({
+      favorites: [
+        { model: 'gemini-4-neon', provider: 'antigravity' },
+        { model: 'gemini-4-neon', provider: 'custom-account' },
+      ],
+      providerModelPreferences: {
+        antigravity: {
+          hiddenModels: ['gemini-4-hydrogen'],
+          modelOrder: ['gemini-4-neon'],
+        },
+        'custom-account': {
+          hiddenModels: ['gemini-4-carbon'],
+          modelOrder: [],
+        },
+      },
+    })
+  );
+
+  const applied = runMigration({ apply: true, checkBinaries: false, cwd: repo, home, platform: 'darwin', t3Only: true });
+  assert.deepEqual(applied.todo, []);
+
+  const settings = JSON.parse(readFileSync(join(home, '.t3/userdata/settings.json'), 'utf8'));
+  assert.ok(settings.favorites.some((fav) => fav.provider === 'custom-account' && fav.model === 'gemini-4-neon'));
+  assert.ok(settings.favorites.some((fav) => fav.provider === 'claudeAgent' && fav.model === 'claude-opus-5-5'));
+  assert.ok(settings.favorites.some((fav) => fav.provider === 'codex' && fav.model === 'gpt-6.2-sol'));
+  assert.deepEqual(settings.providerModelPreferences.antigravity.hiddenModels, ['gemini-4-hydrogen', 'gpt-oss-120b-medium']);
+  assert.deepEqual(settings.providerModelPreferences.antigravity.modelOrder, ['gemini-4-neon']);
+  assert.deepEqual(settings.providerModelPreferences['custom-account'], {
+    hiddenModels: ['gemini-4-carbon'],
+    modelOrder: [],
+  });
+
+  const second = runMigration({ apply: true, checkBinaries: false, cwd: repo, home, platform: 'darwin', t3Only: true });
+  assert.deepEqual(second.changed, []);
+  assert.deepEqual(second.todo, []);
+});

@@ -24,17 +24,23 @@ Let `<skill-dir>` be the directory holding this `SKILL.md`.
    - Writes `~/.gemini/config/pstack-models.md` (`gemini-4-neon @high`, `inherit` subagents, `ui, visual: opus @high`, `medium` routine lanes, 3-family panels with no Opus fallback for Sol) when missing.
    - Symlinks every `~/.t3/userdata/providers/antigravity/*/` profile to `~/.gemini/AGENTS.md` and `~/.gemini/config/{mcp_config.json,skills.json,pstack-models.md,plugins}` (plus `antigravity-acp/mcp_oauth_tokens.json` when present).
    - Strips `~/.gemini/config/plugins/pstack/agents/` (custom agent files like `comment-sicko.md` and `poteto-agent.md`) so Antigravity 1.5.17+ sessions never trigger the 4x custom-agent quota multiplier.
-2. **Install or update the `pstack` Antigravity plugin** if step 1 reported a missing or stale `pstack` pin. Read the pinned tag from `.claude/settings.json` or `.agents/pstack.json` (default `main`), install globally, strip its `agents/` folder, and re-run `--apply` so the T3 profile links `config/plugins`:
+2. **Install or update the `pstack` Antigravity plugin** if step 1 reported a missing or stale `pstack` pin. Read the pinned tag from `.claude/settings.json` or `.agents/pstack.json` (default `main`), install globally (falling back to a direct copy when standalone `agy` CLI is not on `PATH`), strip its `agents/` folder, and re-run `--apply` so the T3 profile links `config/plugins`:
    ```sh
    git clone --depth 1 --branch <tag> https://github.com/michael-denyer/pstack-claude /tmp/pstack-claude
-   agy plugin install /tmp/pstack-claude/plugins/pstack
+   if command -v agy >/dev/null 2>&1; then
+     agy plugin install /tmp/pstack-claude/plugins/pstack
+   else
+     mkdir -p ~/.gemini/config/plugins
+     rm -rf ~/.gemini/config/plugins/pstack
+     cp -R /tmp/pstack-claude/plugins/pstack ~/.gemini/config/plugins/pstack
+   fi
    rm -rf /tmp/pstack-claude ~/.gemini/config/plugins/pstack/agents
    node <skill-dir>/scripts/migrate.mjs --apply
    ```
    Never symlink `.agents/plugins/pstack` inside a repo; `agy` ignores symlinked project plugins.
-3. **Install shared global `ustack` skills** if missing (`start`, `cleanup`, `skill-audit`, `resume-failed`):
+3. **Install shared global `ustack` skills** if missing (`start`, `cleanup`, `skill-audit`):
    ```sh
-   npx --yes skills add udecode/ustack --skill start cleanup skill-audit resume-failed --agent antigravity claude-code --global -y
+   npx --yes skills add udecode/ustack --skill start cleanup skill-audit --agent antigravity claude-code --global -y
    ```
 4. **Install required companion CLIs** if step 1 reported either missing:
    - OpenCode `browse` (required for signed-in Chrome and native clipboard):
@@ -47,7 +53,7 @@ Let `<skill-dir>` be the directory holding this `SKILL.md`.
      ```
 5. **Verify**:
    - Run `node <skill-dir>/scripts/migrate.mjs --check` and resolve any remaining automatable `todo:` items (if a profile has a non-empty local file conflicting with a symlink, tell the user instead of overwriting it).
-   - If the repo has `node .agents/rules/contributor-setup/scripts/doctor.mjs`, run it and apply any automatable `fix:` lines until it prints `ok:` (carry any human-only `fix:` lines, such as `mac-watchdog` `sudo` install, into the final checklist).
+   - If the repo has `node tooling/scripts/setup-doctor.mjs` or `node scripts/check-agent-contracts.mjs`, run it and apply any automatable `fix:` lines until it passes (carry any human-only `fix:` lines, such as `mac-watchdog` `sudo` install, into the final checklist).
 
 ## Project-only MCPs
 
